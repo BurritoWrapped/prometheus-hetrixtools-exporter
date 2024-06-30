@@ -45,7 +45,12 @@ jobs:
       - run: git fetch --force --tags
       - uses: goreleaser/goreleaser-action@v6
         with:
-          version: v1.10.3
-          args: release --rm-dist
+          # either 'goreleaser' (default) or 'goreleaser-pro'
+          distribution: goreleaser
+          # 'latest', 'nightly', or a semver
+          version: "latest"
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Your GoReleaser Pro key, if you are using the 'goreleaser-pro' distribution
+          # GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
