@@ -1,53 +1,47 @@
 package main
 
 import (
-	"flag"
-	"fmt"
-	"log"
-	"net/http"
-	"os"
-	"strings"
-	"time"
+    "flag"
+    "fmt"
+    "log"
+    "net/http"
 
-	"github.com/halkyon/prometheus-hetrixtools-exporter/internal/collector"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/prometheus/common/version"
+    // "os"
+    // "strings"
+    // "time"
+
+    "github.com/halkyon/prometheus-hetrixtools-exporter/internal/collector"
+    "github.com/prometheus/client_golang/prometheus"
+    "github.com/prometheus/client_golang/prometheus/promhttp"
+    // "github.com/prometheus/common/version"
 )
 
 const (
-	program   = "hetrixtools_exporter"
-	namespace = "hetrixtools"
+    defaultListenAddress = ":8080" // Port where the Prometheus metrics will be exposed
+    defaultMetricsPath   = "/metrics"
+    namespace            = "hetrixtools"
 )
 
 func main() {
-	displayVersion := flag.Bool("version", false, "Display version information")
-	addr := flag.String("listen-address", ":8080", "The address to listen on for HTTP requests.")
+    var (
+        listenAddress = flag.String("web.listen-address", defaultListenAddress, "Address on which to expose metrics and web interface.")
+        metricsPath   = flag.String("web.telemetry-path", defaultMetricsPath, "Path under which to expose metrics.")
+        apiKey        = flag.String("hetrixtools.api-key", "", "HetrixTools API key for authentication.")
+    )
 
-	flag.Parse()
+    flag.Parse()
 
-	if *displayVersion {
-		fmt.Println(version.Print(program))
-		return
-	}
+    if *apiKey == "" {
+        log.Fatal("HetrixTools API key is required")
+    }
 
-	apiKey := strings.TrimSpace(os.Getenv("API_KEY"))
-	if apiKey == "" {
-		log.Fatal("API_KEY is not defined in environment")
-	}
+    // Create a new instance of the Collector
+    hetrixCollector := collector.New(namespace, *apiKey)
+    prometheus.MustRegister(hetrixCollector)
 
-	r := prometheus.NewRegistry()
-	r.MustRegister(version.NewCollector(program))
-	r.MustRegister(collector.New(namespace, apiKey))
-
-	mux := http.NewServeMux()
-	mux.Handle("/metrics", promhttp.HandlerFor(r, promhttp.HandlerOpts{}))
-
-	srv := http.Server{
-		Addr:              *addr,
-		Handler:           mux,
-		ReadTimeout:       5 * time.Second,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-	log.Fatal(srv.ListenAndServe())
+    // This will point /metrics to the promhttp handler
+    http.Handle(*metricsPath, promhttp.Handler())
+    fmt.Println("Beginning to serve on port", *listenAddress)
+    log.Fatal(http.ListenAndServe(*listenAddress, nil))
 }
+
