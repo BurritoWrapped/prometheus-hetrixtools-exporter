@@ -1,159 +1,160 @@
 package collector
 
 import (
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/url"
-	"path"
-	"strconv"
-	"strings"
-	"time"
+    "encoding/json"
+    "fmt"
+    "net/http"
+    "strconv"
+    "time"
 
-	"github.com/prometheus/client_golang/prometheus"
+    "github.com/prometheus/client_golang/prometheus"
 )
 
 const (
-	apiBaseURL     = "https://api.hetrixtools.com/v1"
-	requestTimeout = 5 * time.Second
+    apiBaseURL     = "https://api.hetrixtools.com/v3/uptime-monitors"
+    requestTimeout = 5 * time.Second
 )
 
-// Collector is an implementation of Prometheus.Collector.
+type APIResponse struct {
+    Monitors []struct {
+        ID                 string `json:"id"`
+        Name               string `json:"name"`
+        Type               string `json:"type"`
+        Target             string `json:"target"`
+        ResolveAddress     string `json:"resolve_address"`
+        ResolveAddressInfo struct {
+            ASN      string `json:"ASN"`
+            ISP      string `json:"ISP"`
+            City     string `json:"City"`
+            Region   string `json:"Region"`
+            Country  string `json:"Country"`
+        } `json:"resolve_address_info"`
+        Port              interface{} `json:"port"`
+        Keyword           interface{} `json:"keyword"`
+        Category          string      `json:"category"`
+        Timeout           int         `json:"timeout"`
+        CheckFrequency    int         `json:"check_frequency"`
+        ContactLists      []string    `json:"contact_lists"`
+        CreatedAt         int64       `json:"created_at"`
+        LastCheck         int64       `json:"last_check"`
+        LastStatusChange  int64       `json:"last_status_change"`
+        UptimeStatus      string      `json:"uptime_status"`
+        MonitorStatus     string      `json:"monitor_status"`
+        Uptime            string      `json:"uptime"`
+        UptimeInclMaint   string      `json:"uptime_incl_maint"`
+        Locations         map[string]struct {
+            UptimeStatus   string `json:"uptime_status"`
+            ResponseTime   int    `json:"response_time"`
+            LastCheck      int64  `json:"last_check"`
+        } `json:"locations"`
+        SSLExpirationDate     interface{} `json:"ssl_expiration_date"`
+        SSLExpirationWarn     bool        `json:"ssl_expiration_warn"`
+        SSLExpirationWarnDays int         `json:"ssl_expiration_warn_days"`
+        DomainExpirationDate  string      `json:"domain_expiration_date"`
+        DomainExpirationWarn  bool        `json:"domain_expiration_warn"`
+        DomainExpirationWarnDays int      `json:"domain_expiration_warn_days"`
+        Nameservers             interface{} `json:"nameservers"`
+        NameserversChangeWarn   bool        `json:"nameservers_change_warn"`
+        PublicReport            bool        `json:"public_report"`
+        PublicTarget            bool        `json:"public_target"`
+        MaxRedirects            interface{} `json:"max_redirects"`
+        HttpMethod              interface{} `json:"http_method"`
+        AcceptedHTTPCodes       interface{} `json:"accepted_http_codes"`
+        VerifySSLCertificate    bool        `json:"verify_ssl_certificate"`
+        VerifySSLHostname       bool        `json:"verify_ssl_hostname"`
+        NumberOfTries           int         `json:"number_of_tries"`
+        TriggeringLocations     int         `json:"triggering_locations"`
+        AlertAfterMinutes       int         `json:"alert_after_minutes"`
+        RepeatAlertTimes        int         `json:"repeat_alert_times"`
+        RepeatAlertFrequency    int         `json:"repeat_alert_frequency"`
+        AgentID                 string      `json:"agent_id"`
+    } `json:"monitors"`
+    Meta struct {
+        Total         int `json:"total"`
+        TotalFiltered int `json:"total_filtered"`
+        Returned      int `json:"returned"`
+        Pagination    struct {
+            Current  int `json:"current"`
+            Last     int `json:"last"`
+            Previous int `json:"previous"`
+            Next     int `json:"next"`
+        } `json:"pagination"`
+    }
+}
+
+
 type Collector struct {
-	apiKey              string
-	client              http.Client
-	monitorUptimeStatus *prometheus.GaugeVec
-	monitorResponseTime *prometheus.GaugeVec
-	scrapeDurationTime  prometheus.Gauge
-	errorDesc           *prometheus.Desc
+    apiKey              string
+    client              http.Client
+    monitorUptimeStatus *prometheus.GaugeVec
+    monitorResponseTime *prometheus.GaugeVec
 }
 
-type Monitor struct {
-	ID            string            `json:"ID"`
-	Name          string            `json:"Name"`
-	Target        string            `json:"Target"`
-	Port          string            `json:"Port"`
-	UptimeStatus  string            `json:"Uptime_Status"`
-	ResponseTimes map[string]string `json:"Response_Time"`
-}
-
-// New returns a new Collector.
 func New(namespace, apiKey string) *Collector {
-	monitorUptimeStatus := prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: namespace,
-		Name:      "uptime_monitor_status",
-		Help:      "Uptime status of recent monitor check (0: up, 1: down)",
-	}, []string{"id", "name", "target", "port", "status_text"})
+    monitorUptimeStatus := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+        Namespace: namespace,
+        Name:      "uptime_monitor_status",
+        Help:      "Uptime status of recent monitor check (1 for up, 0 for down)",
+    }, []string{"id", "name", "target", "location", "status_text"})
 
-	monitorResponseTime := prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: namespace,
-		Name:      "uptime_monitor_response_time_seconds",
-		Help:      "Response time of recent monitor check",
-	}, []string{"id", "name", "location", "target", "port"})
+    monitorResponseTime := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+        Namespace: namespace,
+        Name:      "uptime_monitor_response_time_seconds",
+        Help:      "Response time of recent monitor check in seconds",
+    }, []string{"id", "name", "location", "target", "timeout"})
 
-	scrapeDurationTime := prometheus.NewGauge(prometheus.GaugeOpts{
-		Namespace: namespace,
-		Name:      "scrape_duration_seconds",
-		Help:      "Time taken to scrape metrics",
-	})
-
-	errorDesc := prometheus.NewDesc(fmt.Sprintf("%s_scrape_error", namespace), "Error scraping target", nil, nil)
-
-	return &Collector{
-		apiKey: apiKey,
-		client: http.Client{
-			Timeout: requestTimeout,
-		},
-		monitorUptimeStatus: monitorUptimeStatus,
-		monitorResponseTime: monitorResponseTime,
-		scrapeDurationTime:  scrapeDurationTime,
-		errorDesc:           errorDesc,
-	}
+    return &Collector{
+        apiKey:              apiKey,
+        client:              http.Client{Timeout: requestTimeout},
+        monitorUptimeStatus: monitorUptimeStatus,
+        monitorResponseTime: monitorResponseTime,
+    }
 }
 
-// Describe implements Prometheus.Collector.
 func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
-	c.monitorUptimeStatus.Describe(ch)
-	c.monitorResponseTime.Describe(ch)
-	c.scrapeDurationTime.Describe(ch)
+    c.monitorUptimeStatus.Describe(ch)
+    c.monitorResponseTime.Describe(ch)
 }
 
-// Collect implements Prometheus.Collector.
 func (c *Collector) Collect(ch chan<- prometheus.Metric) {
-	start := time.Now()
+    apiUrl := fmt.Sprintf("%s?per_page=200&page=1", apiBaseURL)
+    req, err := http.NewRequest("GET", apiUrl, nil)
+    if err != nil {
+        fmt.Println("Error creating request:", err)
+        return
+    }
+    req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
 
-	c.collectUptimeMonitors(ch)
+    resp, err := c.client.Do(req)
+    if err != nil {
+        fmt.Println("Error making API request:", err)
+        return
+    }
+    defer resp.Body.Close()
 
-	c.scrapeDurationTime.Set(time.Since(start).Seconds())
-	c.scrapeDurationTime.Collect(ch)
+    var apiResponse APIResponse
+    decoder := json.NewDecoder(resp.Body)
+    if err := decoder.Decode(&apiResponse); err != nil {
+        fmt.Println("Error decoding API response:", err)
+        return
+    }
+
+    for _, monitor := range apiResponse.Monitors {
+        for locationKey, locationData := range monitor.Locations {
+            statusText := "down"
+            if locationData.UptimeStatus == "up" {
+                statusText = "up"
+            }
+            c.monitorUptimeStatus.WithLabelValues(monitor.ID, monitor.Name, monitor.Target, locationKey, statusText).Set(1.0)
+            c.monitorResponseTime.WithLabelValues(monitor.ID, monitor.Name, locationKey, monitor.Target, strconv.Itoa(monitor.Timeout)).Set(float64(locationData.ResponseTime))
+        }
+    }
+
+    c.monitorUptimeStatus.Collect(ch)
+    c.monitorResponseTime.Collect(ch)
 }
 
-func (c *Collector) collectUptimeMonitors(ch chan<- prometheus.Metric) {
-	monitors, err := fetchMonitors(c.client, c.apiKey, "uptime/monitors/0/5000")
-	if err != nil {
-		ch <- prometheus.NewInvalidMetric(c.errorDesc, err)
-		return
-	}
-
-	for _, mon := range monitors {
-		var status float64
-		// todo: what other values does UptimeStatus contain?
-		if mon.UptimeStatus != "Online" {
-			status = 1
-		}
-
-		c.monitorUptimeStatus.WithLabelValues(mon.ID, mon.Name, mon.Target, mon.Port, mon.UptimeStatus).Set(status)
-
-		for loc, time := range mon.ResponseTimes {
-			loc = strings.ReplaceAll(loc, "_", " ")
-
-			timeFloat, err := strconv.ParseFloat(time, 64)
-			if err != nil {
-				ch <- prometheus.NewInvalidMetric(c.errorDesc, err)
-			}
-
-			c.monitorResponseTime.WithLabelValues(mon.ID, mon.Name, loc, mon.Target, mon.Port).Set(timeFloat / 1000)
-		}
-	}
-
-	c.monitorUptimeStatus.Collect(ch)
-	c.monitorResponseTime.Collect(ch)
+func (c *Collector) handleRateLimiting(resp *http.Response) {
+    // Implementation of rate limiting logic, if applicable
 }
 
-func fetchMonitors(client http.Client, apiKey, endpoint string) (monitors []Monitor, err error) {
-	u, err := url.Parse(apiBaseURL)
-	if err != nil {
-		return monitors, fmt.Errorf("invalid url: %s", apiBaseURL)
-	}
-	u.Path = path.Join(u.Path, apiKey, endpoint)
-
-	req, err := http.NewRequest(http.MethodGet, u.String(), http.NoBody)
-	if err != nil {
-		return monitors, fmt.Errorf("new request: %w", err)
-	}
-
-	req.Header.Set("Accept", "application/json")
-
-	rsp, err := client.Do(req)
-	if err != nil {
-		return monitors, fmt.Errorf("do request: %w", err)
-	}
-	defer func() {
-		_ = rsp.Body.Close()
-	}()
-
-	if rsp.StatusCode != http.StatusOK {
-		return monitors, fmt.Errorf("bad response: %d", rsp.StatusCode)
-	}
-
-	var tmp []json.RawMessage
-	if err := json.NewDecoder(rsp.Body).Decode(&tmp); err != nil {
-		return monitors, fmt.Errorf("json decoder: %w", err)
-	}
-
-	if err := json.Unmarshal(tmp[0], &monitors); err != nil {
-		return monitors, fmt.Errorf("json unmarshal: %w", err)
-	}
-
-	return monitors, nil
-}
