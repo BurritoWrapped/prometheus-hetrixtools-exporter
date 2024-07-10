@@ -1,3 +1,11 @@
+# Fork Info
+
+This fork is heavily modified and adds the following changes:
+- Supports the HetrixTools v3 API
+- Removed the online prometheus metrics, will consider re-adding it at a later time.
+
+
+
 # prometheus-hetrixtools-exporter
 
 `prometheus-hetrixtools-exporter` exports [HetrixTools](https://hetrixtools.com) monitoring data to Prometheus.
