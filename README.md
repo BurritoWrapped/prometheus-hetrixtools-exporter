@@ -33,12 +33,6 @@ hetrixtools_uptime_monitor_response_time_seconds{id="12345",location="San Franci
 
 `API_KEY` must be defined in the environment for this to work, which is your HetrixTools API key.
 
-To run the exporter with Docker:
-
-```
-docker run -e API_KEY=mykey halkyon/prometheus-hetrixtools-exporter
-```
-
 By default the exporter will listen on all interfaces on port `8080`. Use `-listen-address` to listen on something else.
 
 Note that the HetrixTools free account is limited to 1000 API calls per month. If you intend to have Prometheus scrape
